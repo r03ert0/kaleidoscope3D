@@ -74,15 +74,10 @@
 
 					var stlData = 'data:application/csv;charset=utf-8,' + encodeURIComponent( stl );
 
-/*					this.href = stlData;
-					this.target = '_blank';
-					this.download = name+'.stl';
-*/
 					var a = document.createElement('a');
 					a.href = stlData;
 					a.download = name+'.stl';
 					a.click();
-
 				});
 				$("#gif").click(runAnimatedGIF);
 				
@@ -440,7 +435,6 @@
 
 				// encode with a web worker
 				var blob = new Blob([document.querySelector('#worker').textContent],{type:"text/javascript"});
-				// Note: window.webkitURL.createObjectURL() in Chrome 10+.
 				var worker = new Worker(window.URL.createObjectURL(blob));
 				worker.onmessage = function(e) {
 					switch(e.data.msg) {
