@@ -8,41 +8,63 @@
 				margin: 0;
 				overflow: hidden;
 			}
+			#controls {
+				padding:10px;
+			}
 		</style>
 	</head>
 	<body>
 
-		<div style="position:absolute;background-color:#fff">
-		<input type="text" value="2" id="iterations" onchange="handleTransformChange()"/>Iterations<br />
-		<input type="text" value="1" id="scale" onchange="handleTransformChange()"/>Scale<br />
-		<input type="range" min="0" max="360" id="rotx" onmousemove="handleTransformChange()"/>Rotation X<br />
-		<input type="range" min="0" max="360" id="roty" onmousemove="handleTransformChange()"/>Rotation Y<br />
-		<input type="range" min="0" max="360" id="rotz" onmousemove="handleTransformChange()"/>Rotation Z<br />
-		<a id="saveSTL" href=#>Save STL</a>
+		<div id="controls" style="position:absolute;background-color:#fff">
+			<input type="text" value="2" id="iterations" onchange="handleTransformChange()"/>Iterations<br />
+			<input type="text" value="1" id="scale" onchange="handleTransformChange()"/>Scale<br />
+			<input type="range" min="0" max="360" id="rotx" onmousemove="handleTransformChange()"/>Rotation X<br />
+			<input type="range" min="0" max="360" id="roty" onmousemove="handleTransformChange()"/>Rotation Y<br />
+			<input type="range" min="0" max="360" id="rotz" onmousemove="handleTransformChange()"/>Rotation Z<br />
+			<button id="saveSTL">Save STL</button>
+			<button id="gif">Save Animated GIF</button>
 		</div>
+		
+		<div id="canvas3d"></div>
 
 		<script src="jquery-1.11.0.min.js"></script>
 		<script src="three.min.js"></script>
 		<script src="PLYLoader.js"></script>
 		<script src="TrackballControls.js"></script>
-		<script src="CSG.js"></script>
+
+		<script src="b64.js"></script>
+		<script src="LZWEncoder.js"></script>
+		<script src="NeuQuant.js"></script>
+		<script src="GIFEncoder.js"></script>
+
 		<script>
 
-			var camera, scene, renderer;
+			var camera, scene, renderer, canvas;
 			var geometry, mesh=undefined;
 			var	points,faces;	// points and faces of the original object
 			var	tb;
 			var	D=50;	// kaleidoscope triangle: 1/3 of the height
 
-			var init = function () {
-				renderer = new THREE.WebGLRenderer();
-				renderer.setSize( window.innerWidth, window.innerHeight );
-				document.body.appendChild( renderer.domElement );
-				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 10000 );
+			var images; // store animated gif frames
+			var canvasGIF=document.createElement('canvas');
+			var ctx=canvasGIF.getContext('2d');
+
+			function init() {
+				var container=document.getElementById('canvas3d');
+				var	width=window.innerWidth;
+				var	height=window.innerHeight;
+				renderer = new THREE.WebGLRenderer({preserveDrawingBuffer:true});
+				renderer.setSize(width,height);
+				canvas=renderer.domElement;
+				container.appendChild(canvas);
+				camera = new THREE.PerspectiveCamera( 75, width/height, 1, 10000 );
 				camera.position.z = 500;
 				tb = new THREE.TrackballControls(camera,renderer.domElement);
 				scene = new THREE.Scene();
-				
+
+				canvasGIF.width=320;
+				canvasGIF.height=320;
+
 				$("#saveSTL").click(function(){
 					var stl = getSTL();
 		
@@ -51,10 +73,18 @@
 						return;
 
 					var stlData = 'data:application/csv;charset=utf-8,' + encodeURIComponent( stl );
-					this.href = stlData;
+
+/*					this.href = stlData;
 					this.target = '_blank';
 					this.download = name+'.stl';
+*/
+					var a = document.createElement('a');
+					a.href = stlData;
+					a.download = name+'.stl';
+					a.click();
+
 				});
+				$("#gif").click(runAnimatedGIF);
 				
 				// load test object
 				//var path="rings.ply";
@@ -79,8 +109,7 @@
 				};
 				oReq.send();
 			}
-
-			var animate = function () {
+			function animate() {
 
 				requestAnimationFrame( animate );
 
@@ -111,7 +140,6 @@
 				var n=cross3D(sub3D(pb,pa),sub3D(pc,pa));
 				return sca3D(n,1/norm3D(n));
 			}
-
 			function getSTL() {
 			    var i,stl=[],t,pa,pb,pc;
 			    
@@ -138,8 +166,7 @@
 				
 				return stl;
 			}
-			function handleTransformChange(e)
-			{
+			function handleTransformChange(e) {
 				var it=parseFloat(document.getElementById('iterations').value);
 				var s=parseFloat(document.getElementById('scale').value);
 				var rx=parseFloat(document.getElementById('rotx').value)*Math.PI/180;
@@ -189,17 +216,14 @@
 				
 				console.log(p1.length);
 			}
-
-			
-			// intersect3D_SegmentPlane(): find the 3D intersection of a segment and a plane
-			//    Input:  S = a segment, and Pn = a plane = {Point V0;  Vector n;}
-			//    Output: *I0 = the intersect point (when it exists)
-			//    Return: 0 = disjoint (no intersection)
-			//            1 =  intersection in the unique point *I0
-			//            2 = the  segment lies in the plane
-			//			  3 = segment is too short to cut the plane
-			function intersectSegmentPlane(p0,p1, v0,n)
-			{
+			function intersectSegmentPlane(p0,p1, v0,n) {
+				// intersect3D_SegmentPlane(): find the 3D intersection of a segment and a plane
+				//    Input:  S = a segment, and Pn = a plane = {Point V0;  Vector n;}
+				//    Output: *I0 = the intersect point (when it exists)
+				//    Return: 0 = disjoint (no intersection)
+				//            1 =  intersection in the unique point *I0
+				//            2 = the  segment lies in the plane
+				//			  3 = segment is too short to cut the plane
 				var u = {x:p1.x-p0.x,y:p1.y-p0.y,z:p1.z-p0.z};
 				var w = {x:p0.x-v0.x,y:p0.y-v0.y,z:p0.z-v0.z};
 				var SMALL_NUM=0.000001;
@@ -223,13 +247,10 @@
 				inter = new THREE.Vector3(p0.x+sI*u.x,p0.y+sI*u.y,p0.z+sI*u.z); // compute segment intersect point
 				return {f:1,s:sI,i:inter};
 			}
-			function sign(p,p0,n0)
-			{
+			function sign(p,p0,n0) {
 				return (p.x-p0.x)*n0.x+(p.y-p0.y)*n0.y+(p.z-p0.z)*n0.z;
 			}
-
-			function crop(p,f)
-			{
+			function crop(p,f) {
 				var i,j,k,o;
 				var flag,inter;
 				var	v0=[];	// 2 plane points
@@ -298,8 +319,7 @@
 					for(j=0;j<ff.length;j++) f.push(ff[j]);
 				}				
 			}
-			function center(p)
-			{
+			function center(p) {
 				var i,el,o=[0,0,0];
 				for(i=0;i<p.length;i++) {
 					el=p[i];
@@ -317,8 +337,7 @@
 					el.z-=o[2];
 				}
 			}
-			function scale(p,sx,sy,sz)
-			{
+			function scale(p,sx,sy,sz) {
 				var i;
 				for(i=0;i<p.length;i++) {
 					p[i].x*=sx;
@@ -326,8 +345,7 @@
 					p[i].z*=sz;
 				}
 			}
-			function translate(p,sx,sy,sz)
-			{
+			function translate(p,sx,sy,sz) {
 				var i;
 				for(i=0;i<p.length;i++) {
 					p[i].x+=sx;
@@ -335,8 +353,7 @@
 					p[i].z+=sz;
 				}
 			}
-			function rotate(p,alpha,beta,gamma)
-			{
+			function rotate(p,alpha,beta,gamma) {
 				var m = new THREE.Matrix4();
 				var m1 = new THREE.Matrix4();
 				var m2 = new THREE.Matrix4();
@@ -353,30 +370,26 @@
 				for(i=0;i<p.length;i++)
 					p[i].applyMatrix4(m);
 			}
-			function clonePoints(p)
-			{
+			function clonePoints(p) {
 				var j,p0=[];
 				for(j=0;j<p.length;j++)
 					p0[j]=new THREE.Vector3(p[j].x,p[j].y,p[j].z);
 				return p0;
 			}
-			function cloneFaces(f)
-			{
+			function cloneFaces(f) {
 				var j,f0=[];
 				for(j=0;j<f.length;j++)
 					f0[j]=new THREE.Face3(f[j].a,f[j].b,f[j].c);
 				return f0;
 			}
-			function append(p0,f0,p,f)
-			{
+			function append(p0,f0,p,f) {
 				var	i,o=p0.length;
 				for(i=0;i<p.length;i++)
 					p0.push(new THREE.Vector3(p[i].x,p[i].y,p[i].z));
 				for(i=0;i<f.length;i++)
 					f0.push(new THREE.Face3(f[i].a+o,f[i].b+o,f[i].c+o));
 			}
-			function flip(p,f,flipx,flipy,flipz)
-			{
+			function flip(p,f,flipx,flipy,flipz) {
 				var i,a,b,c;
 				for(i=0;i<p.length;i++) {
 					p[i].x*=flipx;
@@ -393,46 +406,100 @@
 					}
 				}
 			}
-
-			init();
-			animate();
-
-				/*
-				points=[new THREE.Vector3(0,0,0),new THREE.Vector3(1,0,0),new THREE.Vector3(1,1,0),new THREE.Vector3(0,1,0),
-						new THREE.Vector3(0,0,1),new THREE.Vector3(1,0,1),new THREE.Vector3(1,1,1),new THREE.Vector3(0,1,1)];
-				faces=[new THREE.Face3(0,2,1),new THREE.Face3(0,3,2),new THREE.Face3(1,6,5),new THREE.Face3(1,2,6),
-						new THREE.Face3(2,7,6),new THREE.Face3(2,3,7),new THREE.Face3(3,4,7),new THREE.Face3(3,0,4),
-						new THREE.Face3(0,5,4),new THREE.Face3(0,1,5),new THREE.Face3(5,7,4),new THREE.Face3(5,6,7)];
-
-				// center and scale the test object
-				center(points);
-				scale(points,100,100,100);
-				//append(geometry,points,faces);
-
-				crop(points,faces);
-				//translate(points,150,0,0);
-				//append(geometry,points,faces);
+			function runAnimatedGIF() {
+				var it=parseFloat(document.getElementById('iterations').value);
+				var s=parseFloat(document.getElementById('scale').value);
+				var rz=parseFloat(document.getElementById('rotz').value)*Math.PI/180;
+				var rx,ry;
 				
-				var i;
-				for(i=0;i<6;i++)
-				{
-					p0=clonePoints(points);
-					f0=cloneFaces(faces);
-					flip(p0,f0,1-2*(i%2),1,1);
-					rotate(p0,0,0,Math.PI/3*(i+2));
-					translate(p0,100*Math.cos(Math.PI/3*(i+0.5)),100*Math.sin(Math.PI/3*(i+0.5)),0);
-					append(geometry,p0,f0);
+				images=[];
+				for(rx=0;rx<4*Math.PI;rx+=Math.PI/30.0) {
+					console.log(parseInt(rx/Math.PI*100));
+					ry=rx*0.5;
+					var param={ scale:{x:s,y:s,z:s},
+								translate:{x:0,y:0,z:0},
+								rotate:{x:rx,y:ry,z:rz}};
+
+					kaleidoscope(param,points,faces);
+					for(i=1;i<it;i++)
+						kaleidoscope(param,geometry.vertices,geometry.faces);
+
+					mesh.rotation.x = 0.5*rx;
+					mesh.rotation.y = ry;
+					renderer.render( scene, camera );
+
+					var img = new Image();
+					var imgData=canvas.toDataURL();
+					img.src = imgData;
+					var ctx=canvasGIF.getContext('2d');
+					ctx.drawImage(img,(canvas.width-canvas.height)/2,0,canvas.height,canvas.height,0,0,canvasGIF.width,canvasGIF.height);
+					var img2=ctx.getImageData(0,0,canvasGIF.width,canvasGIF.height).data;
+				
+					images.push(img2);
 				}
 
-				geometry.computeFaceNormals();
-				geometry.computeVertexNormals(); 
-
-				material = new THREE.MeshNormalMaterial({ overdraw: 0.5,wireframe: true});
-				//material = new THREE.MeshBasicMaterial( {color:'red',wireframe: false, wireframeLinewidth: 2 } );
-				mesh = new THREE.Mesh( geometry, material );
-				scene.add( mesh );
-				*/
+				// encode with a web worker
+				var blob = new Blob([document.querySelector('#worker').textContent],{type:"text/javascript"});
+				// Note: window.webkitURL.createObjectURL() in Chrome 10+.
+				var worker = new Worker(window.URL.createObjectURL(blob));
+				worker.onmessage = function(e) {
+					switch(e.data.msg) {
+						case "log":
+							console.log(e.data.data);
+							break;
+						case "result":
+							var byteCharacters = atob(encode64(e.data.data));
+							var byteNumbers = new Array(byteCharacters.length);
+							for (var i = 0; i < byteCharacters.length; i++) {
+								byteNumbers[i] = byteCharacters.charCodeAt(i);
+							}
+							var byteArray = new Uint8Array(byteNumbers);
+							var a = document.createElement('a');
+							var blob = new Blob([byteArray], {type: "data:image/gif"});
+							var url = window.URL.createObjectURL(blob);
+							a.href = url;
+							a.download = 'anima.gif';
+							a.click();
+							window.URL.revokeObjectURL(url);							
+							break;
+					}
+				}
+				worker.postMessage({
+					url:location.protocol+'//'+location.host+'/kaleidoscope3D/',
+					message:"animate",
+					images:images,
+					width:canvasGIF.width,
+					height:canvasGIF.height
+				});
+			}
 			
+			init();
+			animate();
+		</script>
+		<script id="worker" type="javascript/worker">
+			self.onmessage = function(e) {
+				self.postMessage({msg:"log",data:"starting"});
+
+				importScripts(
+				e.data.url+'b64.js',
+				e.data.url+'LZWEncoder.js',
+				e.data.url+'NeuQuant.js',
+				e.data.url+'GIFEncoder.js');
+				var images=e.data.images;
+				var encoder = new GIFEncoder();
+				encoder.setRepeat(0);
+				encoder.setDelay(1000/15);				
+				encoder.setSize(e.data.width,e.data.height);
+
+				encoder.start();
+				for(var i=0;i<images.length;i++) {
+					self.postMessage({msg:"log",data:"encoding "+i});
+					encoder.addFrame(images[i],true);
+				}
+				encoder.finish();
+				self.postMessage({msg:"log",data:"sending result"});
+				self.postMessage({msg:"result",data:encoder.stream().getData()});
+			}
 		</script>
 	</body>
 </html>
